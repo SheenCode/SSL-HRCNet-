@@ -252,3 +252,77 @@ class CrossAttentionFusion(nn.Module):
         fused = fused.transpose(1, 2)  # [B, 2C, L]
         return fused
 
+class SimCLRStage1(nn.Module):
+    def __init__(self, in_channels=1, proj_hidden_dim=64, feat_dim=128):
+        super(SimCLRStage1, self).__init__()
+
+        # two encoders for two views
+        self.f1 = FeatureEncoder(in_channels=in_channels)
+        self.f2 = FeatureEncoder(in_channels=in_channels)
+
+        # global pooling
+        self.gap = nn.AdaptiveAvgPool1d(1)
+
+        # projection heads
+        self.proj1 = nn.Sequential(
+            nn.Linear(feat_dim, proj_hidden_dim, bias=False),
+            nn.BatchNorm1d(proj_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(proj_hidden_dim, feat_dim, bias=True)
+        )
+
+        self.proj2 = nn.Sequential(
+            nn.Linear(feat_dim, proj_hidden_dim, bias=False),
+            nn.BatchNorm1d(proj_hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(proj_hidden_dim, feat_dim, bias=True)
+        )
+
+    def forward(self, x):
+        """
+        x: [B, 2, T]
+           x[:, 0, :] -> RRI
+           x[:, 1, :] -> R-peak amplitude
+        """
+        x1 = self.f1(x[:, 0, :].unsqueeze(1))   # [B, 128, L']
+        x2 = self.f2(x[:, 1, :].unsqueeze(1))   # [B, 128, L']
+
+        f1 = self.gap(x1).squeeze(-1)           # [B, 128]
+        f2 = self.gap(x2).squeeze(-1)           # [B, 128]
+
+        out1 = self.proj1(f1)                   # [B, 128]
+        out2 = self.proj2(f2)                   # [B, 128]
+
+        return (
+            F.normalize(f1, dim=-1),
+            F.normalize(f2, dim=-1),
+            F.normalize(out1, dim=-1),
+            F.normalize(out2, dim=-1),
+        )
+
+
+class SimCLRStage2(nn.Module):
+    def __init__(self, in_channels=1, num_classes=2, feat_dim=128):
+        super(SimCLRStage2, self).__init__()
+
+        # encoder
+        pretrained_stage1 = SimCLRStage1(in_channels=in_channels, feat_dim=feat_dim)
+        self.f1 = pretrained_stage1.f1
+        self.f2 = pretrained_stage1.f2
+
+        self.gap = nn.AdaptiveAvgPool1d(1)
+
+        # classifier
+        self.fc = nn.Linear(feat_dim, num_classes, bias=True)
+
+    def forward(self, x):
+        """
+        x: [B, 2, T]
+        """
+        x1 = self.f1(x[:, 0, :].unsqueeze(1))   # [B, 128, L']
+        x2 = self.f2(x[:, 1, :].unsqueeze(1))   # [B, 128, L']
+
+        feature = self.gap(x1 + x2).squeeze(-1) # [B, 128]
+        out = self.fc(feature)                  # [B, 2]
+        return out
+
