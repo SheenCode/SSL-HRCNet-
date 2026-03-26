@@ -40,8 +40,8 @@ The framework consists of two main components:
 ### 1. Self-Supervised Pre-training
 - Input: unlabeled ECG signals
 - Generate two views:
-  - RRIs (temporal rhythm)
-  - R-peaks (morphological variation)
+  - RRIs
+  - R-peaks
 - Contrastive learning to align physiological representations
 
 ### 2. Supervised Fine-tuning
